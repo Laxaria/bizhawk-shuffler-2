@@ -14,7 +14,6 @@ next_swap_time = 0
 running = false
 plugins = {}
 
-
 -- determine operating system for the purpose of commands
 _PLATFORMS = {['dll'] = 'WIN', ['so'] = 'LINUX', ['dylib'] = 'MAC'}
 PLATFORM = _PLATFORMS[(package.cpath..';'):match('%.(%a+);')]
@@ -33,15 +32,15 @@ UNSUPPORTED_LUA_CORE = "NLua"
 COMPRESSION_WARNING_THRESHOLD = 2
 MAX_INTEGER = 99999999
 
-SHUFFLER_VERSION = "1.0.0_laxaria"
+SHUFFLER_VERSION = "1.1.0_laxaria"
 
-function compose_string(...)
-	return table.concat(arg, '\t')
+function compose_string(t)
+	return table.concat(t, '\t')
 end
 
 function log_message(msg, quiet, target_file)
 	if not quiet then print(msg) end
-
+	
 	local handle, err
 
 	if target_file == 'swap_log' then
@@ -52,9 +51,8 @@ function log_message(msg, quiet, target_file)
 		handle, err = io.open('message.log', 'a')
 		handle:write(os.date("[%c] \t"))
 	end
-	
-	if handle == nil then return end
 
+	if handle == nil then return end
 	handle:write(tostring(msg))
 	handle:write('\n')
 	handle:close()
@@ -327,14 +325,14 @@ local function on_game_load()
 		savestate.load(state)
 	end
 
-	-- write swap counter for this game
-	write_data('output-info/current-swaps.txt', config.game_swaps[config.current_game])
+	local new_swaps = config.game_swaps[config.current_game]
+	local _curr_total_swaps = config.total_swaps or 0
 
-	-- write total swap counter for shuffler
-	write_data('output-info/total-swaps.txt', config.total_swaps)
-
-	-- update game name
-	write_data('output-info/current-game.txt', strip_ext(config.current_game))
+	if config.output_files >= 1 then
+		write_data('output-info/current-swaps.txt', new_swaps)
+		write_data('output-info/total-swaps.txt', _curr_total_swaps)
+		write_data('output-info/current-game.txt', strip_ext(config.current_game))
+	end
 
 	-- this code just outright crashes on Bizhawk 2.6.1, go figure
 	if checkversion("2.6.2") then
@@ -416,18 +414,18 @@ function swap_game(next_game)
 	-- structure is [Total Swaps, Epoch, Current Total Frame, 
 	--               Current Game Frame, Current Game Swaps 
 	--               Current Game Name, Next Game]
-	local _current_game_frame_count = config.game_frame_count[config.current_game] or 0
 	local _total_swaps = config.total_swaps or 1
 	local _current_game = config.current_game or 'Nothing'
 	local _current_total_frame_count = config.frame_count or 0
+	local _current_game_frame_count = config.game_frame_count[config.current_game] or 0 
 	local _current_game_swaps = config.game_swaps[config.current_game] or 1
-
-	local _swap_message = compose_string(_total_swaps, os.time(os.date("*t")), 
-	                                     _current_total_frame_count,
-	                                     _current_game_frame_count, _current_game_swaps,
-	                                     _current_game, next_game)
-
+	local _swap_msg_table = {_total_swaps, os.time(os.date("*t")), 
+							 _current_total_frame_count,
+							 _current_game_frame_count, _current_game_swaps,
+							 _current_game, next_game}
+	local _swap_message = compose_string(_swap_msg_table)
 	log_message(_swap_message, true, 'swap_log')
+
 
 	-- if the game isn't changing, stop here and just update the timer
 	-- (you might think we should just disable the timer at this point, but this
@@ -469,7 +467,7 @@ function swap_game(next_game)
 	-- advance total swap counter
 	config.total_swaps = (config.total_swaps or 1) + 1
 
-	-- advance game's swap counter
+	-- update swap counter for this game
 	local new_swaps = (config.game_swaps[config.current_game] or 0) + 1
 	config.game_swaps[config.current_game] = new_swaps
 
@@ -589,26 +587,6 @@ function mark_complete()
 	-- mark the game as complete in the config file rather than moving files around
 	table.insert(config.completed_games, config.current_game)
 	log_message(config.current_game .. ' marked complete')
-
-	-- log that we are marking a game as completed
-	-- structure is [Total Swaps, Epoch, Current Total Frame, 
-	--               Current Game Frame, Current Game Name,
-	--               Current Game Total Swaps, Completed]
-
-	local _current_game_frame_count = config.game_frame_count[config.current_game] or 0
-	local _total_swaps = config.total_swaps or 1
-	local _current_game = config.current_game or 'Nothing'
-	local _current_total_frame_count = config.frame_count or 0
-	local _current_game_total_swaps = config.game_swaps[config.current_game] or 1
-
-	local _completed_message = compose_string(_total_swaps, os.time(os.date("*t")), 
-	                                          _current_total_frame_count,
-	                                          _current_game_frame_count,
-	                                          _current_game, _current_game_total_swaps,
-	                                          'COMPLETED')
-	
-	log_message(_completed_message, true, 'completed_log')
-
 	for _,plugin in ipairs(plugins) do
 		if plugin.on_complete ~= nil then
 			local pdata = config.plugins[plugin._module]
@@ -710,9 +688,11 @@ function complete_setup()
 	end
 
 	-- these messages will only appear in the message log
-	log_message('Platform: ' .. PLATFORM, false)
-	log_message('Shuffler Version: ' .. SHUFFLER_VERSION, false)
-	log_message('Bizhawk version: ' .. client.getversion(), false)
+	log_message('Platform: ' .. PLATFORM, true)
+	log_message('Bizhawk version: ' .. client.getversion(), true)
+	for _,game in ipairs(games) do
+		log_message('GAME FOUND: ' .. game, true)
+	end
 
 	local _total_game_count = 0
 
@@ -720,7 +700,6 @@ function complete_setup()
 		log_message('GAME FOUND: ' .. game, true)
 		_total_game_count = _total_game_count + 1
 	end
-
 	log_message('TOTAL GAMES: ' .. _total_game_count, false)
 
 	save_config(config, 'shuffler-src/config.lua')
